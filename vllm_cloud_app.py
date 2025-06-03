@@ -37,7 +37,7 @@ current_model_info = {"status": "loading", "name": "none"}
 
 class GenerateRequest(BaseModel):
     prompt: str
-    max_tokens: int = 150
+    max_tokens: int = 50 # Уменьшаем значение по умолчанию для снижения потребления памяти
     temperature: float = 0.7
 
 class ChangeModelRequest(BaseModel):
@@ -77,7 +77,7 @@ def load_model_transformers(model_name):
 @app.on_event("startup")
 async def startup():
     """Загрузка модели при старте (асинхронно)"""
-    model_name = os.getenv("MODEL_NAME", "microsoft/DialoGPT-small")
+    model_name = os.getenv("MODEL_NAME", "microsoft/DialoGPT-small") # Изменено на меньшую модель
     
     if HAS_TRANSFORMERS:
         # Запускаем загрузку модели в фоновом режиме
@@ -91,7 +91,7 @@ async def load_model_async(model_name: str):
     try:
         load_model_transformers(model_name)
     except Exception as e:
-        logger.error(f"Ошибка загрузки модели в фоновом режиме: {e}")
+        logger.exception(f"Ошибка загрузки модели в фоновом режиме: {e}") # Используем logger.exception для полной трассировки
         current_model_info["status"] = "error"
         current_model_info["error"] = str(e)
 

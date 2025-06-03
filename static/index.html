@@ -328,24 +328,20 @@
             }
         }
         
-        // Загрузка статистики при запуске
-        async function loadStats() {
+        // Загрузка данных о модели при запуске
+        async function loadModelInfo() {
             try {
-                const [modelsRes, statsRes] = await Promise.all([
-                    fetch('/models'),
-                    fetch('/stats')
-                ]);
-                
+                const modelsRes = await fetch('/models');
                 const models = await modelsRes.json();
-                const stats = await statsRes.json();
                 
                 // Обновляем список доступных моделей
                 const modelSelect = document.getElementById('modelSelect');
                 const backendSelect = document.getElementById('backendSelect');
-                const currentModel = models.current_model?.name;
+                const currentModel = models.current?.name; // Изменено с models.current_model на models.current
                 
                 modelSelect.innerHTML = '';
-                models.available_models.forEach(model => {
+                // Изменено с models.available_models на models.available
+                models.available.forEach(model => { 
                     const option = document.createElement('option');
                     option.value = model;
                     option.textContent = model;
@@ -359,64 +355,52 @@
                 const backendOptions = backendSelect.querySelectorAll('option');
                 backendOptions.forEach(option => {
                     const backend = option.value;
-                    if (backend === 'vllm' && !models.available_backends?.vllm) {
+                    // Изменено с models.available_backends на models.backends
+                    if (backend === 'vllm' && !models.backends?.vllm) { 
                         option.disabled = true;
                         option.textContent += ' (недоступен)';
                     }
-                    if (backend === 'transformers' && !models.available_backends?.transformers) {
+                    // Изменено с models.available_backends на models.backends
+                    if (backend === 'transformers' && !models.backends?.transformers) { 
                         option.disabled = true;
                         option.textContent += ' (недоступен)';
                     }
                 });
                 
                 // Выбираем текущий backend
-                if (models.current_model?.backend) {
-                    backendSelect.value = models.current_model.backend;
+                if (models.current?.backend) { // Изменено с models.current_model на models.current
+                    backendSelect.value = models.current.backend;
                 }
                 
                 // Обновляем статус модели
                 const modelStatus = document.getElementById('modelStatus');
-                if (models.current_model?.status === 'loaded') {
+                if (models.current?.status === 'loaded') { // Изменено с models.current_model на models.current
                     modelStatus.className = 'model-status success';
-                    modelStatus.textContent = `✅ Загружена: ${models.current_model.name} (${models.current_model.backend})`;
-                } else if (models.current_model?.status === 'error') {
+                    modelStatus.textContent = `✅ Загружена: ${models.current.name} (${models.current.backend})`;
+                } else if (models.current?.status === 'error') { // Изменено с models.current_model на models.current
                     modelStatus.className = 'model-status error';
-                    modelStatus.textContent = `❌ Ошибка: ${models.current_model.error}`;
+                    modelStatus.textContent = `❌ Ошибка: ${models.current.error}`;
                 } else {
                     modelStatus.className = 'model-status loading';
                     modelStatus.textContent = '🔄 Загружается...';
                 }
                 
-                // Обновляем статистику
+                // Удаляем секцию статистики, так как эндпоинт /stats не существует
                 const statsDiv = document.getElementById('stats');
-                statsDiv.innerHTML = `
-                    <div class="stat-card">
-                        <div class="stat-value">${models.current_model?.name || 'N/A'}</div>
-                        <div class="stat-label">Текущая модель</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-value">${models.current_model?.device || 'N/A'}</div>
-                        <div class="stat-label">Устройство</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-value">${stats.memory_percent ? stats.memory_percent.toFixed(1) + '%' : 'N/A'}</div>
-                        <div class="stat-label">Использование памяти</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-value">${models.current_model?.status || 'unknown'}</div>
-                        <div class="stat-label">Статус</div>
-                    </div>
-                `;
+                if (statsDiv) {
+                    statsDiv.style.display = 'none'; // Скрываем или удаляем элемент
+                }
+
             } catch (error) {
-                console.error('Ошибка загрузки статистики:', error);
+                console.error('Ошибка загрузки данных о модели:', error);
                 const modelStatus = document.getElementById('modelStatus');
                 modelStatus.className = 'model-status error';
                 modelStatus.textContent = '❌ Ошибка загрузки данных о модели';
             }
         }
         
-        // Загружаем статистику при загрузке страницы
-        loadStats();
+        // Загружаем данные о модели при загрузке страницы
+        loadModelInfo();
         
         // Обработка Enter для отправки
         document.getElementById('prompt').addEventListener('keydown', function(e) {
