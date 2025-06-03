@@ -54,7 +54,8 @@ ENV MODEL_NAME=microsoft/DialoGPT-small \
     PORT=8080 \
     HOST=0.0.0.0 \
     PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+    PYTHONDONTWRITEBYTECODE=1 \
+    HF_HOME=/home/appuser/.cache/huggingface # Устанавливаем HF_HOME для разрешения проблем с доступом
 
 # Открываем порт для Sliplane
 EXPOSE 8080

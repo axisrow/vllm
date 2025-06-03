@@ -136,6 +136,9 @@ async def generate(request: GenerateRequest):
             if isinstance(result[0], dict) and "generated_text" in result[0]:
                 text = str(result[0]["generated_text"])
         
+        logger.info(f"Сгенерированный результат: {result}") # Добавляем логирование
+        logger.info(f"Извлеченный текст: {text}") # Добавляем логирование
+        
         return {
             "text": text.strip(),
             "prompt": request.prompt,
