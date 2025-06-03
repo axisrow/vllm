@@ -44,16 +44,6 @@ COPY --chown=appuser:appuser static/ /app/static/
 # Переключаемся на непривилегированного пользователя
 USER appuser
 
-# Переменные окружения для облачного развертывания
-ENV MODEL_NAME=microsoft/DialoGPT-small \
-    MAX_MODEL_LEN=512 \
-    GPU_MEMORY_UTILIZATION=0.8 \
-    PORT=8080 \
-    HOST=0.0.0.0 \
-    PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    HF_HOME=/home/appuser/.cache/huggingface # Устанавливаем HF_HOME для разрешения проблем с доступом
-
 # Открываем порт для Sliplane
 EXPOSE 8080
 
