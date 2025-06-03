@@ -26,13 +26,10 @@ RUN chown -R appuser:appuser /app
 # Обновляем pip до последней версии
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
-# Устанавливаем PyTorch CPU версию (совместимость с большинством облачных платформ)
-RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
-
-# Устанавливаем основные зависимости (без vLLM для избежания проблем)
+# Устанавливаем vLLM (для CPU)
+# vLLM требует PyTorch, который будет установлен как зависимость
 RUN pip install --no-cache-dir \
-    transformers \
-    accelerate \
+    vllm \
     fastapi \
     uvicorn \
     requests \

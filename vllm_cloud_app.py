@@ -11,61 +11,61 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import uvicorn
-import asyncio # Добавляем импорт asyncio
+import asyncio
+import torch # Для проверки доступности MPS
 
 # Логирование
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Импорты
+# Импорты vLLM
 try:
-    from transformers import AutoTokenizer
-    from transformers.pipelines import pipeline
-    import torch
-    HAS_TRANSFORMERS = True
-    logger.info("✅ Transformers доступен")
+    from vllm import LLM, SamplingParams
+    HAS_VLLM = True
+    logger.info("✅ vLLM доступен")
 except ImportError:
-    HAS_TRANSFORMERS = False
-    logger.error("❌ Transformers недоступен")
+    HAS_VLLM = False
+    logger.error("❌ vLLM недоступен")
 
 app = FastAPI(title="vLLM Cloud Server")
 
 # Глобальные переменные
-generator = None
-tokenizer = None
+llm = None
 current_model_info = {"status": "loading", "name": "none"}
 
 class GenerateRequest(BaseModel):
     prompt: str
-    max_tokens: int = 50 # Уменьшаем значение по умолчанию для снижения потребления памяти
+    max_tokens: int = 150 # Возвращаем значение по умолчанию
     temperature: float = 0.7
 
 class ChangeModelRequest(BaseModel):
     model_name: str
 
-def load_model_transformers(model_name):
-    """Загрузка через transformers"""
-    global generator, tokenizer, current_model_info
+def load_model_vllm(model_name: str):
+    """Загрузка модели через vLLM"""
+    global llm, current_model_info
     
-    logger.info(f"Загружаем {model_name} через transformers")
+    logger.info(f"Загружаем {model_name} через vLLM")
     
     try:
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
-        if tokenizer.pad_token is None:
-            tokenizer.pad_token = tokenizer.eos_token
-            
-        generator = pipeline(
-            "text-generation",
+        # Проверяем доступность MPS (Metal Performance Shaders) для M1
+        device = "mps" if torch.backends.mps.is_available() else "cpu"
+        logger.info(f"Используемое устройство: {device}")
+
+        llm = LLM(
             model=model_name,
-            tokenizer=tokenizer,
-            device="cpu",  # CPU
-            return_full_text=True # Изменено на True для получения полного текста
+            tensor_parallel_size=1,  # Для одного GPU/устройства
+            gpu_memory_utilization=float(os.getenv("GPU_MEMORY_UTILIZATION", 0.8)),
+            max_model_len=int(os.getenv("MAX_MODEL_LEN", 512)),
+            enforce_eager=True,  # Отключаем CUDA graphs для совместимости с CPU/MPS
+            dtype="float16" if device == "mps" else "auto" # Используем float16 для MPS
         )
         
         current_model_info = {
             "status": "loaded",
             "name": model_name,
-            "backend": "transformers"
+            "backend": "vLLM",
+            "device": device
         }
         logger.info(f"✅ Модель {model_name} загружена")
         
@@ -77,21 +77,21 @@ def load_model_transformers(model_name):
 @app.on_event("startup")
 async def startup():
     """Загрузка модели при старте (асинхронно)"""
-    model_name = os.getenv("MODEL_NAME", "microsoft/DialoGPT-small") # Изменено на меньшую модель
+    model_name = os.getenv("MODEL_NAME", "distilgpt2") # Используем distilgpt2 по умолчанию
     
-    if HAS_TRANSFORMERS:
+    if HAS_VLLM:
         # Запускаем загрузку модели в фоновом режиме
         asyncio.create_task(load_model_async(model_name))
     else:
         current_model_info["status"] = "error"
-        current_model_info["error"] = "Transformers не установлен"
+        current_model_info["error"] = "vLLM не установлен"
 
 async def load_model_async(model_name: str):
     """Асинхронная обертка для загрузки модели"""
     try:
-        load_model_transformers(model_name)
+        load_model_vllm(model_name)
     except Exception as e:
-        logger.exception(f"Ошибка загрузки модели в фоновом режиме: {e}") # Используем logger.exception для полной трассировки
+        logger.exception(f"Ошибка загрузки модели в фоновом режиме: {e}")
         current_model_info["status"] = "error"
         current_model_info["error"] = str(e)
 
@@ -118,37 +118,33 @@ async def generate(request: GenerateRequest):
     try:
         start_time = time.time()
         
-        if generator is None:
-            raise HTTPException(500, "Генератор не доступен")
+        if llm is None:
+            raise HTTPException(500, "LLM не доступен")
             
-        # Генерируем текст
-        result = generator(
-            request.prompt,
-            max_new_tokens=request.max_tokens,
+        # Настройки генерации для vLLM
+        sampling_params = SamplingParams(
             temperature=request.temperature,
-            do_sample=True,
-            pad_token_id=tokenizer.eos_token_id if tokenizer else None
+            top_p=0.9, # Используем фиксированный top_p, так как он не передается из UI
+            max_tokens=request.max_tokens,
+            stop=["</s>", "<|endoftext|>"] # Общие токены остановки
         )
+
+        # Генерируем ответы
+        outputs = llm.generate([request.prompt], sampling_params)
         
         # Безопасно извлекаем текст
         text = ""
-        if isinstance(result, list) and len(result) > 0:
-            if isinstance(result[0], dict) and "generated_text" in result[0]:
-                full_text = str(result[0]["generated_text"])
-                # Удаляем исходный запрос из сгенерированного текста
-                if full_text.startswith(request.prompt):
-                    text = full_text[len(request.prompt):].strip()
-                else:
-                    text = full_text.strip()
+        if outputs and outputs[0].outputs:
+            text = outputs[0].outputs[0].text
         
-        logger.info(f"Сгенерированный результат: {result}") # Добавляем логирование
+        logger.info(f"Сгенерированный результат: {outputs}") # Добавляем логирование
         logger.info(f"Извлеченный текст: {text}") # Добавляем логирование
         
         return {
             "text": text.strip(),
             "prompt": request.prompt,
             "model": current_model_info["name"],
-            "generation_time": time.time() - start_time # Изменено с "time" на "generation_time"
+            "generation_time": time.time() - start_time
         }
         
     except Exception as e:
@@ -161,31 +157,31 @@ async def get_models():
     return {
         "current": current_model_info,
         "available": [
-            "microsoft/DialoGPT-small",
-            "microsoft/DialoGPT-medium",
-            "distilgpt2",
-            "gpt2"
+            "distilgpt2", # vLLM лучше работает с моделями, не требующими специфического токенизатора
+            "gpt2",
+            "microsoft/DialoGPT-small", # Добавляем обратно, если пользователь захочет попробовать
+            "microsoft/DialoGPT-medium"
         ],
         "backends": {
-            "transformers": HAS_TRANSFORMERS
+            "vllm": HAS_VLLM
         }
     }
 
 @app.post("/change_model")
 async def change_model(request: ChangeModelRequest):
     """Смена модели"""
-    global current_model_info, generator
+    global current_model_info, llm # Изменено generator на llm
     
     current_model_info = {"status": "loading", "name": request.model_name}
     
     # Очистка
-    generator = None
+    llm = None # Очищаем llm
     
     try:
-        if HAS_TRANSFORMERS:
-            load_model_transformers(request.model_name)
+        if HAS_VLLM: # Изменено HAS_TRANSFORMERS на HAS_VLLM
+            load_model_vllm(request.model_name) # Изменено load_model_transformers на load_model_vllm
         else:
-            raise Exception("Transformers недоступен")
+            raise Exception("vLLM недоступен") # Изменено "Transformers недоступен" на "vLLM недоступен"
             
         return {"message": f"Модель изменена на {request.model_name}"}
         
