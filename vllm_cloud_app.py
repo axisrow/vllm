@@ -54,7 +54,7 @@ def load_model_vllm(model_name: str):
 
         llm = LLM(
             model=model_name,
-            device="cpu", # Явно указываем устройство
+            # Удаляем явное указание устройства, полагаясь на VLLM_TARGET_DEVICE
             tensor_parallel_size=1,  # Для одного GPU/устройства
             gpu_memory_utilization=float(os.getenv("GPU_MEMORY_UTILIZATION", 0.8)),
             max_model_len=int(os.getenv("MAX_MODEL_LEN", 512)),
