@@ -47,23 +47,27 @@ def load_model_vllm(model_name: str):
     logger.info(f"Загружаем {model_name} через vLLM")
     
     try:
-        # Проверяем доступность MPS (Metal Performance Shaders) для M1
-        device = "mps" if torch.backends.mps.is_available() else "cpu"
+        # Определяем целевое устройство: сначала проверяем MPS, затем CPU
+        if torch.backends.mps.is_available():
+            device = "mps"
+        else:
+            device = "cpu"
+        
         logger.info(f"Используемое устройство: {device}")
 
-        # Если устройство CPU, явно отключаем CUDA для vLLM
+        # Если устройство CPU, явно устанавливаем VLLM_TARGET_DEVICE
         if device == "cpu":
-            os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
-            logger.info("Установлена переменная окружения CUDA_VISIBLE_DEVICES=\"-1\" для использования CPU.")
+            os.environ["VLLM_TARGET_DEVICE"] = "cpu"
+            logger.info("Установлена переменная окружения VLLM_TARGET_DEVICE=\"cpu\" для использования CPU.")
 
         llm = LLM(
             model=model_name,
+            device=device, # Явно указываем устройство
             tensor_parallel_size=1,  # Для одного GPU/устройства
             gpu_memory_utilization=float(os.getenv("GPU_MEMORY_UTILIZATION", 0.8)),
             max_model_len=int(os.getenv("MAX_MODEL_LEN", 512)),
             enforce_eager=True,  # Отключаем CUDA graphs для совместимости с CPU/MPS
-            dtype="float16" if device == "mps" else "auto", # Используем float16 для MPS
-            device=device # Явно указываем устройство
+            dtype="float16" if device == "mps" else "auto" # Используем float16 для MPS
         )
         
         current_model_info = {
