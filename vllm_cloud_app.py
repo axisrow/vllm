@@ -47,11 +47,7 @@ def load_model_vllm(model_name: str):
     logger.info(f"Загружаем {model_name} через vLLM")
     
     try:
-        # Определяем целевое устройство: сначала проверяем MPS, затем CPU
-        if torch.backends.mps.is_available():
-            device = "mps"
-        else:
-            device = "cpu"
+        device = "cpu"
         
         logger.info(f"Используемое устройство: {device}")
 
