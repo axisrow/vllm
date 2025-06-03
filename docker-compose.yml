@@ -1,0 +1,63 @@
+# Docker Compose для Sliplane развертывания
+version: '3.8'
+
+services:
+  vllm-cloud:
+    build: .
+    container_name: vllm-sliplane
+    ports:
+      - "8080:8080"  # Sliplane обычно использует 8080
+    
+    environment:
+      # Конфигурация модели
+      - MODEL_NAME=microsoft/DialoGPT-small  # Маленькая модель для облака
+      - MAX_MODEL_LEN=512                    # Ограничиваем контекст
+      - GPU_MEMORY_UTILIZATION=0.7          # Консервативное использование памяти
+      - PORT=8080                           # Стандартный порт для Sliplane
+      - HOST=0.0.0.0
+      
+      # Опциональные настройки
+      - PYTHONUNBUFFERED=1                  # Для корректных логов в облаке
+      - TRANSFORMERS_CACHE=/app/.cache      # Кэш моделей
+    
+    volumes:
+      # Кэш для ускорения перезапусков (если поддерживается)
+      - model_cache:/app/.cache
+    
+    # Ограничения ресурсов для облачного развертывания
+    deploy:
+      resources:
+        limits:
+          memory: 4G      # Ограничение памяти
+          cpus: '2.0'     # Ограничение CPU
+        reservations:
+          memory: 2G
+          cpus: '1.0'
+    
+    # Restart policy для продакшена
+    restart: unless-stopped
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s  # Больше времени для загрузки модели
+    
+    # Логирование
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+# Именованные тома
+volumes:
+  model_cache:
+    driver: local
+
+# Сеть (может быть полезно для multi-service setup)
+networks:
+  default:
+    name: vllm-cloud-network
