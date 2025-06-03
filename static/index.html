@@ -258,10 +258,12 @@
                 if (response.ok) {
                     modelStatus.className = 'model-status success';
                     modelStatus.textContent = `✅ ${data.message}`;
-                    // Обновляем статистику
-                    setTimeout(() => loadStats(), 1000);
+                    // Обновляем информацию о модели
+                    setTimeout(() => loadModelInfo(), 1000);
                 } else {
-                    throw new Error(data.detail || 'Ошибка смены модели');
+                    // Пытаемся получить более подробное сообщение об ошибке из ответа сервера
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.detail || data.detail || 'Ошибка смены модели');
                 }
             } catch (error) {
                 modelStatus.className = 'model-status error';
@@ -309,11 +311,13 @@
                         <div class="result">
                             <h3>📝 Результат:</h3>
                             <p><strong>${data.text}</strong></p>
-                            <small>Модель: ${data.model} | Время: ${data.generation_time.toFixed(2)}s</small>
+                            <small>Модель: ${data.model} | Время: ${data.generation_time ? data.generation_time.toFixed(2) : 'N/A'}s</small>
                         </div>
                     `;
                 } else {
-                    throw new Error(data.detail || 'Ошибка генерации');
+                    // Пытаемся получить более подробное сообщение об ошибке из ответа сервера
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.detail || data.detail || 'Ошибка генерации');
                 }
             } catch (error) {
                 resultDiv.innerHTML = `
@@ -337,10 +341,9 @@
                 // Обновляем список доступных моделей
                 const modelSelect = document.getElementById('modelSelect');
                 const backendSelect = document.getElementById('backendSelect');
-                const currentModel = models.current?.name; // Изменено с models.current_model на models.current
+                const currentModel = models.current?.name;
                 
                 modelSelect.innerHTML = '';
-                // Изменено с models.available_models на models.available
                 models.available.forEach(model => { 
                     const option = document.createElement('option');
                     option.value = model;
@@ -355,12 +358,10 @@
                 const backendOptions = backendSelect.querySelectorAll('option');
                 backendOptions.forEach(option => {
                     const backend = option.value;
-                    // Изменено с models.available_backends на models.backends
                     if (backend === 'vllm' && !models.backends?.vllm) { 
                         option.disabled = true;
                         option.textContent += ' (недоступен)';
                     }
-                    // Изменено с models.available_backends на models.backends
                     if (backend === 'transformers' && !models.backends?.transformers) { 
                         option.disabled = true;
                         option.textContent += ' (недоступен)';
@@ -368,16 +369,16 @@
                 });
                 
                 // Выбираем текущий backend
-                if (models.current?.backend) { // Изменено с models.current_model на models.current
+                if (models.current?.backend) {
                     backendSelect.value = models.current.backend;
                 }
                 
                 // Обновляем статус модели
                 const modelStatus = document.getElementById('modelStatus');
-                if (models.current?.status === 'loaded') { // Изменено с models.current_model на models.current
+                if (models.current?.status === 'loaded') {
                     modelStatus.className = 'model-status success';
                     modelStatus.textContent = `✅ Загружена: ${models.current.name} (${models.current.backend})`;
-                } else if (models.current?.status === 'error') { // Изменено с models.current_model на models.current
+                } else if (models.current?.status === 'error') {
                     modelStatus.className = 'model-status error';
                     modelStatus.textContent = `❌ Ошибка: ${models.current.error}`;
                 } else {
@@ -392,7 +393,7 @@
                 }
 
             } catch (error) {
-                console.error('Ошибка загрузки данных о модели:', error);
+                console.error('Ошибк загрузки данных о модели:', error);
                 const modelStatus = document.getElementById('modelStatus');
                 modelStatus.className = 'model-status error';
                 modelStatus.textContent = '❌ Ошибка загрузки данных о модели';
