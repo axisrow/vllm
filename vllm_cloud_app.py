@@ -57,7 +57,7 @@ def load_model_transformers(model_name):
             "text-generation",
             model=model_name,
             tokenizer=tokenizer,
-            device=-1,  # CPU
+            device="cpu",  # CPU
             return_full_text=False
         )
         
