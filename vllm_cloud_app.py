@@ -59,7 +59,7 @@ def load_model_transformers(model_name):
             model=model_name,
             tokenizer=tokenizer,
             device="cpu",  # CPU
-            return_full_text=False
+            return_full_text=True # Изменено на True для получения полного текста
         )
         
         current_model_info = {
@@ -134,7 +134,12 @@ async def generate(request: GenerateRequest):
         text = ""
         if isinstance(result, list) and len(result) > 0:
             if isinstance(result[0], dict) and "generated_text" in result[0]:
-                text = str(result[0]["generated_text"])
+                full_text = str(result[0]["generated_text"])
+                # Удаляем исходный запрос из сгенерированного текста
+                if full_text.startswith(request.prompt):
+                    text = full_text[len(request.prompt):].strip()
+                else:
+                    text = full_text.strip()
         
         logger.info(f"Сгенерированный результат: {result}") # Добавляем логирование
         logger.info(f"Извлеченный текст: {text}") # Добавляем логирование
