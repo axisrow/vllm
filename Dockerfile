@@ -1,31 +1,39 @@
 # Dockerfile для vLLM на Sliplane (облачное развертывание)
-FROM nvidia/cuda:12.1-devel-ubuntu22.04
+FROM python:3.12-slim-bookworm
 
 # Устанавливаем системные зависимости
 RUN apt-get update && apt-get install -y \
-    python3 \
-    python3-pip \
-    python3-dev \
     curl \
     wget \
     git \
     build-essential \
-    && rm -rf /var/lib/apt/lists/*
+    gcc \
+    g++ \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -rf /tmp/* \
+    && rm -rf /var/tmp/*
+
+# Создаем непривилегированного пользователя для безопасности
+RUN groupadd -r appuser && useradd -r -g appuser appuser
 
 # Создаем рабочую директорию
 WORKDIR /app
 
-# Обновляем pip
-RUN pip3 install --upgrade pip
+# Меняем владельца директории
+RUN chown -R appuser:appuser /app
 
-# Устанавливаем PyTorch (CPU версия для совместимости с разными облачными провайдерами)
-RUN pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+# Обновляем pip до последней версии
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+
+# Устанавливаем PyTorch CPU версию (совместимость с большинством облачных платформ)
+RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 
 # Устанавливаем vLLM
-RUN pip3 install vllm
+RUN pip install --no-cache-dir vllm
 
 # Устанавливаем дополнительные зависимости
-RUN pip3 install \
+RUN pip install --no-cache-dir \
     transformers \
     accelerate \
     fastapi \
@@ -36,18 +44,21 @@ RUN pip3 install \
     psutil
 
 # Копируем код приложения
-COPY vllm_cloud_app.py /app/
-COPY static/ /app/static/
+COPY --chown=appuser:appuser vllm_cloud_app.py /app/
+COPY --chown=appuser:appuser static/ /app/static/
+COPY --chown=appuser:appuser requirements.txt /app/
 
-# Создаем requirements.txt
-COPY requirements.txt /app/
+# Переключаемся на непривилегированного пользователя
+USER appuser
 
 # Переменные окружения для облачного развертывания
-ENV MODEL_NAME=microsoft/DialoGPT-small
-ENV MAX_MODEL_LEN=512
-ENV GPU_MEMORY_UTILIZATION=0.8
-ENV PORT=8080
-ENV HOST=0.0.0.0
+ENV MODEL_NAME=microsoft/DialoGPT-small \
+    MAX_MODEL_LEN=512 \
+    GPU_MEMORY_UTILIZATION=0.8 \
+    PORT=8080 \
+    HOST=0.0.0.0 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
 
 # Открываем порт для Sliplane
 EXPOSE 8080
@@ -57,4 +68,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
   CMD curl -f http://localhost:8080/health || exit 1
 
 # Команда запуска
-CMD ["python3", "/app/vllm_cloud_app.py"]
+CMD ["python", "/app/vllm_cloud_app.py"]
