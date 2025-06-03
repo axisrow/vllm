@@ -1,286 +1,194 @@
 #!/usr/bin/env python3
 """
-vLLM сервер для облачного развертывания на Sliplane
-Оптимизирован для работы в контейнерной среде
+vLLM Cloud Server - простая рабочая версия (только transformers)
 """
 
 import os
-import sys
 import logging
-import asyncio
-from typing import List, Optional
-from fastapi import FastAPI, HTTPException, Request
+import time
+from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import uvicorn
-from vllm import LLM, SamplingParams
-import torch
-import time
 
-# Настройка логирования
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+# Логирование
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(
-    title="vLLM Cloud Server",
-    version="1.0.0",
-    description="Облачный сервер для генерации текста с использованием vLLM"
-)
+# Импорты
+try:
+    from transformers import AutoTokenizer
+    from transformers.pipelines import pipeline
+    import torch
+    HAS_TRANSFORMERS = True
+    logger.info("✅ Transformers доступен")
+except ImportError:
+    HAS_TRANSFORMERS = False
+    logger.error("❌ Transformers недоступен")
 
-# Глобальная переменная для модели
-llm_model = None
-model_info = {}
+app = FastAPI(title="vLLM Cloud Server")
+
+# Глобальные переменные
+generator = None
+tokenizer = None
+current_model_info = {"status": "loading", "name": "none"}
 
 class GenerateRequest(BaseModel):
     prompt: str
     max_tokens: int = 150
     temperature: float = 0.7
-    top_p: float = 0.9
-    stop: Optional[List[str]] = None
 
-class GenerateResponse(BaseModel):
-    text: str
-    prompt: str
-    model: str
-    generation_time: float
+class ChangeModelRequest(BaseModel):
+    model_name: str
 
-class BatchGenerateRequest(BaseModel):
-    prompts: List[str]
-    max_tokens: int = 150
-    temperature: float = 0.7
-    top_p: float = 0.9
-    stop: Optional[List[str]] = None
-
-def get_optimal_model():
-    """Выбирает оптимальную модель в зависимости от доступных ресурсов"""
+def load_model_transformers(model_name):
+    """Загрузка через transformers"""
+    global generator, tokenizer, current_model_info
     
-    # Проверяем переменную окружения
-    model_name = os.getenv("MODEL_NAME")
-    if model_name:
-        return model_name
-    
-    # Автоматический выбор в зависимости от памяти
-    try:
-        import psutil
-        memory_gb = psutil.virtual_memory().total / (1024**3)
-        
-        if memory_gb >= 8:
-            return "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-        elif memory_gb >= 4:
-            return "microsoft/DialoGPT-medium"
-        else:
-            return "microsoft/DialoGPT-small"
-    except:
-        return "microsoft/DialoGPT-small"
-
-def load_model():
-    """Загрузка модели vLLM с оптимизацией для облака"""
-    global llm_model, model_info
-    
-    model_name = get_optimal_model()
-    max_model_len = int(os.getenv("MAX_MODEL_LEN", "512"))
-    
-    logger.info(f"🤖 Загружаем модель: {model_name}")
-    logger.info(f"📏 Максимальная длина контекста: {max_model_len}")
-    
-    # Определяем конфигурацию в зависимости от доступности GPU
-    if torch.cuda.is_available():
-        logger.info(f"🚀 CUDA доступна: {torch.cuda.get_device_name(0)}")
-        device_config = {
-            "tensor_parallel_size": 1,
-            "gpu_memory_utilization": float(os.getenv("GPU_MEMORY_UTILIZATION", "0.8")),
-        }
-    else:
-        logger.info("💻 Используем CPU режим")
-        device_config = {
-            "tensor_parallel_size": 1,
-            "gpu_memory_utilization": 0.0,
-        }
+    logger.info(f"Загружаем {model_name} через transformers")
     
     try:
-        start_time = time.time()
-        
-        llm_model = LLM(
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+            
+        generator = pipeline(
+            "text-generation",
             model=model_name,
-            max_model_len=max_model_len,
-            enforce_eager=True,  # Улучшает совместимость
-            trust_remote_code=True,  # Для некоторых моделей
-            **device_config
+            tokenizer=tokenizer,
+            device=-1,  # CPU
+            return_full_text=False
         )
         
-        load_time = time.time() - start_time
-        
-        model_info = {
+        current_model_info = {
+            "status": "loaded",
             "name": model_name,
-            "max_length": max_model_len,
-            "device": "cuda" if torch.cuda.is_available() else "cpu",
-            "load_time": load_time,
-            "status": "loaded"
+            "backend": "transformers"
         }
-        
-        logger.info(f"✅ Модель загружена за {load_time:.2f}s")
+        logger.info(f"✅ Модель {model_name} загружена")
         
     except Exception as e:
-        logger.error(f"❌ Ошибка загрузки модели: {e}")
-        model_info = {"status": "error", "error": str(e)}
+        current_model_info = {"status": "error", "error": str(e)}
+        logger.error(f"❌ Ошибка загрузки: {e}")
         raise
 
 @app.on_event("startup")
-async def startup_event():
-    """Событие запуска приложения"""
-    logger.info("🚀 Запуск vLLM Cloud Server")
+async def startup():
+    """Загрузка модели при старте"""
+    model_name = os.getenv("MODEL_NAME", "microsoft/DialoGPT-small")
     
-    # Загружаем модель в отдельном потоке чтобы не блокировать startup
-    try:
-        load_model()
-    except Exception as e:
-        logger.error(f"Ошибка при загрузке модели: {e}")
+    if HAS_TRANSFORMERS:
+        try:
+            load_model_transformers(model_name)
+        except Exception as e:
+            logger.error(f"Ошибка загрузки: {e}")
+    else:
+        current_model_info["status"] = "error"
+        current_model_info["error"] = "Transformers не установлен"
 
 @app.get("/")
 async def root():
-    """Главная страница"""
+    """Главная страница - для healthcheck"""
     return {
-        "message": "vLLM Cloud Server",
-        "status": "running",
-        "model": model_info.get("name", "not loaded"),
-        "endpoints": {
-            "generate": "/generate",
-            "batch": "/batch",
-            "models": "/models",
-            "health": "/health",
-            "ui": "/ui"
-        }
+        "status": "ok",
+        "service": "vLLM Cloud Server",
+        "model": current_model_info
     }
 
 @app.get("/health")
 async def health():
-    """Health check для Sliplane"""
-    return {
-        "status": "healthy" if llm_model is not None else "loading",
-        "model_loaded": llm_model is not None,
-        "model_info": model_info
-    }
+    """Health check"""
+    return {"status": "healthy", "model": current_model_info}
 
-@app.post("/generate", response_model=GenerateResponse)
+@app.post("/generate")
 async def generate(request: GenerateRequest):
     """Генерация текста"""
-    if llm_model is None:
-        raise HTTPException(status_code=503, detail="Модель еще загружается")
+    if current_model_info.get("status") != "loaded":
+        raise HTTPException(503, "Модель не загружена")
     
     try:
         start_time = time.time()
         
-        sampling_params = SamplingParams(
+        if generator is None:
+            raise HTTPException(500, "Генератор не доступен")
+            
+        # Генерируем текст
+        result = generator(
+            request.prompt,
+            max_new_tokens=request.max_tokens,
             temperature=request.temperature,
-            top_p=request.top_p,
-            max_tokens=request.max_tokens,
-            stop=request.stop or ["</s>", "<|endoftext|>", "\n\n"]
+            do_sample=True,
+            pad_token_id=tokenizer.eos_token_id if tokenizer else None
         )
         
-        outputs = llm_model.generate([request.prompt], sampling_params)
-        generated_text = outputs[0].outputs[0].text
-        
-        generation_time = time.time() - start_time
-        
-        return GenerateResponse(
-            text=generated_text.strip(),
-            prompt=request.prompt,
-            model=model_info.get("name", "unknown"),
-            generation_time=generation_time
-        )
-    
-    except Exception as e:
-        logger.error(f"❌ Ошибка генерации: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/batch")
-async def batch_generate(request: BatchGenerateRequest):
-    """Батчевая генерация для нескольких промптов"""
-    if llm_model is None:
-        raise HTTPException(status_code=503, detail="Модель еще загружается")
-    
-    try:
-        start_time = time.time()
-        
-        sampling_params = SamplingParams(
-            temperature=request.temperature,
-            top_p=request.top_p,
-            max_tokens=request.max_tokens,
-            stop=request.stop or ["</s>", "<|endoftext|>", "\n\n"]
-        )
-        
-        outputs = llm_model.generate(request.prompts, sampling_params)
-        
-        results = []
-        for output in outputs:
-            results.append({
-                "prompt": output.prompt,
-                "text": output.outputs[0].text.strip(),
-                "model": model_info.get("name", "unknown")
-            })
-        
-        generation_time = time.time() - start_time
+        # Безопасно извлекаем текст
+        text = ""
+        if isinstance(result, list) and len(result) > 0:
+            if isinstance(result[0], dict) and "generated_text" in result[0]:
+                text = str(result[0]["generated_text"])
         
         return {
-            "results": results,
-            "total_prompts": len(request.prompts),
-            "generation_time": generation_time
+            "text": text.strip(),
+            "prompt": request.prompt,
+            "model": current_model_info["name"],
+            "time": time.time() - start_time
         }
-    
+        
     except Exception as e:
-        logger.error(f"❌ Ошибка батчевой генерации: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Ошибка генерации: {e}")
+        raise HTTPException(500, str(e))
 
 @app.get("/models")
 async def get_models():
-    """Информация о загруженной модели"""
+    """Список моделей"""
     return {
-        "current_model": model_info,
-        "available_models": [
+        "current": current_model_info,
+        "available": [
             "microsoft/DialoGPT-small",
-            "microsoft/DialoGPT-medium", 
+            "microsoft/DialoGPT-medium",
             "distilgpt2",
-            "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-        ]
+            "gpt2"
+        ],
+        "backends": {
+            "transformers": HAS_TRANSFORMERS
+        }
     }
 
-@app.get("/stats")
-async def get_stats():
-    """Статистика сервера"""
+@app.post("/change_model")
+async def change_model(request: ChangeModelRequest):
+    """Смена модели"""
+    global current_model_info, generator
+    
+    current_model_info = {"status": "loading", "name": request.model_name}
+    
+    # Очистка
+    generator = None
+    
     try:
-        import psutil
+        if HAS_TRANSFORMERS:
+            load_model_transformers(request.model_name)
+        else:
+            raise Exception("Transformers недоступен")
+            
+        return {"message": f"Модель изменена на {request.model_name}"}
         
-        return {
-            "cpu_percent": psutil.cpu_percent(),
-            "memory_percent": psutil.virtual_memory().percent,
-            "disk_usage": psutil.disk_usage('/').percent,
-            "model_info": model_info
-        }
-    except ImportError:
-        return {"error": "psutil not available"}
+    except Exception as e:
+        current_model_info = {"status": "error", "error": str(e)}
+        raise HTTPException(500, str(e))
 
-# Подключаем статические файлы и UI
+# Статические файлы
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
 
-@app.get("/ui", response_class=HTMLResponse)
-async def get_ui():
-    """Веб-интерфейс"""
+@app.get("/ui")
+async def ui():
+    """Веб интерфейс"""
     return FileResponse("/app/static/index.html")
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", "8080"))  # Sliplane обычно использует 8080
-    host = os.getenv("HOST", "0.0.0.0")
-    
-    logger.info(f"🌐 Запуск сервера на {host}:{port}")
-    
     uvicorn.run(
         app,
-        host=host,
-        port=port,
-        log_level="info",
-        access_log=True
+        host="0.0.0.0",
+        port=8080,
+        log_level="info"
     )

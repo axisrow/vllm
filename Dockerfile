@@ -29,10 +29,7 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 # Устанавливаем PyTorch CPU версию (совместимость с большинством облачных платформ)
 RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 
-# Устанавливаем vLLM
-RUN pip install --no-cache-dir vllm
-
-# Устанавливаем дополнительные зависимости
+# Устанавливаем основные зависимости (без vLLM для избежания проблем)
 RUN pip install --no-cache-dir \
     transformers \
     accelerate \
@@ -43,10 +40,9 @@ RUN pip install --no-cache-dir \
     aiofiles \
     psutil
 
-# Копируем код приложения
+# Копируем код приложения (только необходимые файлы)
 COPY --chown=appuser:appuser vllm_cloud_app.py /app/
 COPY --chown=appuser:appuser static/ /app/static/
-COPY --chown=appuser:appuser requirements.txt /app/
 
 # Переключаемся на непривилегированного пользователя
 USER appuser
@@ -63,9 +59,9 @@ ENV MODEL_NAME=microsoft/DialoGPT-small \
 # Открываем порт для Sliplane
 EXPOSE 8080
 
-# Health check для облачной платформы
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-  CMD curl -f http://localhost:8080/health || exit 1
+# Health check для облачной платформы (проверяем главную страницу)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=3 \
+  CMD curl -f http://localhost:8080/ || exit 1
 
 # Команда запуска
 CMD ["python", "/app/vllm_cloud_app.py"]
