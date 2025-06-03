@@ -6,6 +6,7 @@ vLLM Cloud Server - простая рабочая версия (только tra
 import os
 import logging
 import time
+from contextlib import asynccontextmanager # Импортируем asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -26,8 +27,6 @@ try:
 except ImportError:
     HAS_VLLM = False
     logger.error("❌ vLLM недоступен")
-
-app = FastAPI(title="vLLM Cloud Server")
 
 # Глобальные переменные
 llm = None
@@ -74,9 +73,9 @@ def load_model_vllm(model_name: str):
         logger.error(f"❌ Ошибка загрузки: {e}")
         raise
 
-@app.on_event("startup")
-async def startup():
-    """Загрузка модели при старте (асинхронно)"""
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Обработчик событий жизненного цикла приложения"""
     model_name = os.getenv("MODEL_NAME", "distilgpt2") # Используем distilgpt2 по умолчанию
     
     if HAS_VLLM:
@@ -85,6 +84,11 @@ async def startup():
     else:
         current_model_info["status"] = "error"
         current_model_info["error"] = "vLLM не установлен"
+    
+    yield # Приложение запущено
+
+    # Здесь можно добавить логику очистки при завершении работы приложения
+    logger.info("Приложение завершает работу.")
 
 async def load_model_async(model_name: str):
     """Асинхронная обертка для загрузки модели"""
@@ -94,6 +98,8 @@ async def load_model_async(model_name: str):
         logger.exception(f"Ошибка загрузки модели в фоновом режиме: {e}")
         current_model_info["status"] = "error"
         current_model_info["error"] = str(e)
+
+app = FastAPI(title="vLLM Cloud Server", lifespan=lifespan) # Добавляем lifespan
 
 @app.get("/")
 async def root():
