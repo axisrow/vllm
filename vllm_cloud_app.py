@@ -55,14 +55,12 @@ def load_model_vllm(model_name: str):
         
         logger.info(f"Используемое устройство: {device}")
 
-        # Если устройство CPU, явно устанавливаем VLLM_TARGET_DEVICE
-        if device == "cpu":
-            os.environ["VLLM_TARGET_DEVICE"] = "cpu"
-            logger.info("Установлена переменная окружения VLLM_TARGET_DEVICE=\"cpu\" для использования CPU.")
+        # Явно устанавливаем VLLM_TARGET_DEVICE для выбранного устройства
+        os.environ["VLLM_TARGET_DEVICE"] = device
+        logger.info(f"Установлена переменная окружения VLLM_TARGET_DEVICE=\"{device}\" для использования {device.upper()}.")
 
         llm = LLM(
             model=model_name,
-            device=device, # Явно указываем устройство
             tensor_parallel_size=1,  # Для одного GPU/устройства
             gpu_memory_utilization=float(os.getenv("GPU_MEMORY_UTILIZATION", 0.8)),
             max_model_len=int(os.getenv("MAX_MODEL_LEN", 512)),
