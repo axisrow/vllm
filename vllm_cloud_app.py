@@ -140,7 +140,7 @@ async def generate(request: GenerateRequest):
             "text": text.strip(),
             "prompt": request.prompt,
             "model": current_model_info["name"],
-            "time": time.time() - start_time
+            "generation_time": time.time() - start_time # Изменено с "time" на "generation_time"
         }
         
     except Exception as e:
