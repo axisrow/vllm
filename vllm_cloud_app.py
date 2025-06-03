@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import uvicorn
+import asyncio # Добавляем импорт asyncio
 
 # Логирование
 logging.basicConfig(level=logging.INFO)
@@ -75,17 +76,24 @@ def load_model_transformers(model_name):
 
 @app.on_event("startup")
 async def startup():
-    """Загрузка модели при старте"""
+    """Загрузка модели при старте (асинхронно)"""
     model_name = os.getenv("MODEL_NAME", "microsoft/DialoGPT-small")
     
     if HAS_TRANSFORMERS:
-        try:
-            load_model_transformers(model_name)
-        except Exception as e:
-            logger.error(f"Ошибка загрузки: {e}")
+        # Запускаем загрузку модели в фоновом режиме
+        asyncio.create_task(load_model_async(model_name))
     else:
         current_model_info["status"] = "error"
         current_model_info["error"] = "Transformers не установлен"
+
+async def load_model_async(model_name: str):
+    """Асинхронная обертка для загрузки модели"""
+    try:
+        load_model_transformers(model_name)
+    except Exception as e:
+        logger.error(f"Ошибка загрузки модели в фоновом режиме: {e}")
+        current_model_info["status"] = "error"
+        current_model_info["error"] = str(e)
 
 @app.get("/")
 async def root():
