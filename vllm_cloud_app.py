@@ -51,6 +51,11 @@ def load_model_vllm(model_name: str):
         device = "mps" if torch.backends.mps.is_available() else "cpu"
         logger.info(f"Используемое устройство: {device}")
 
+        # Если устройство CPU, явно отключаем CUDA для vLLM
+        if device == "cpu":
+            os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+            logger.info("Установлена переменная окружения CUDA_VISIBLE_DEVICES=\"-1\" для использования CPU.")
+
         llm = LLM(
             model=model_name,
             tensor_parallel_size=1,  # Для одного GPU/устройства
