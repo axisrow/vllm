@@ -107,11 +107,85 @@
             color: #6c757d;
             margin-top: 5px;
         }
+        .model-section {
+            background: #e9ecef;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .model-controls {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr auto;
+            gap: 15px;
+            align-items: end;
+            margin: 15px 0;
+        }
+        .model-controls > div {
+            display: flex;
+            flex-direction: column;
+        }
+        .model-controls label {
+            margin-bottom: 5px;
+            font-size: 12px;
+            font-weight: 600;
+            color: #555;
+        }
+        .model-status {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        .model-status.loading {
+            background: #fff3cd;
+            color: #856404;
+        }
+        .model-status.success {
+            background: #d4edda;
+            color: #155724;
+        }
+        .model-status.error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        select {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>🤖 vLLM Cloud Server</h1>
+        
+        <!-- Секция выбора модели -->
+        <div class="model-section">
+            <h3>📦 Модель и Backend</h3>
+            <div class="model-controls">
+                <div>
+                    <label for="modelSelect">Модель:</label>
+                    <select id="modelSelect">
+                        <option value="">Загружается...</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="backendSelect">Backend:</label>
+                    <select id="backendSelect">
+                        <option value="auto">Автоматически</option>
+                        <option value="transformers">Transformers</option>
+                        <option value="vllm">vLLM</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="maxModelLen">Макс. длина:</label>
+                    <input type="number" id="maxModelLen" value="512" min="256" max="2048">
+                </div>
+                <button onclick="changeModel()" id="changeModelBtn">Сменить модель</button>
+            </div>
+            <div id="modelStatus" class="model-status"></div>
+        </div>
         
         <textarea id="prompt" placeholder="Введите ваш запрос для генерации текста...">Привет! Расскажи короткую историю о космических приключениях.</textarea>
         
@@ -146,6 +220,56 @@
         
         document.getElementById('topP').oninput = function() {
             document.getElementById('topPValue').textContent = this.value;
+        }
+        
+        async function changeModel() {
+            const modelSelect = document.getElementById('modelSelect');
+            const backendSelect = document.getElementById('backendSelect');
+            const maxModelLen = parseInt(document.getElementById('maxModelLen').value);
+            const changeModelBtn = document.getElementById('changeModelBtn');
+            const modelStatus = document.getElementById('modelStatus');
+            
+            const selectedModel = modelSelect.value;
+            const selectedBackend = backendSelect.value;
+            
+            if (!selectedModel) {
+                alert('Выберите модель');
+                return;
+            }
+            
+            changeModelBtn.disabled = true;
+            changeModelBtn.textContent = 'Загружаю...';
+            modelStatus.className = 'model-status loading';
+            modelStatus.textContent = `🔄 Загружается модель ${selectedModel} (${selectedBackend})...`;
+            
+            try {
+                const response = await fetch('/change_model', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        model_name: selectedModel,
+                        max_model_len: maxModelLen,
+                        backend: selectedBackend
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    modelStatus.className = 'model-status success';
+                    modelStatus.textContent = `✅ ${data.message}`;
+                    // Обновляем статистику
+                    setTimeout(() => loadStats(), 1000);
+                } else {
+                    throw new Error(data.detail || 'Ошибка смены модели');
+                }
+            } catch (error) {
+                modelStatus.className = 'model-status error';
+                modelStatus.textContent = `❌ ${error.message}`;
+            } finally {
+                changeModelBtn.disabled = false;
+                changeModelBtn.textContent = 'Сменить модель';
+            }
         }
         
         async function generate() {
@@ -215,14 +339,63 @@
                 const models = await modelsRes.json();
                 const stats = await statsRes.json();
                 
+                // Обновляем список доступных моделей
+                const modelSelect = document.getElementById('modelSelect');
+                const backendSelect = document.getElementById('backendSelect');
+                const currentModel = models.current_model?.name;
+                
+                modelSelect.innerHTML = '';
+                models.available_models.forEach(model => {
+                    const option = document.createElement('option');
+                    option.value = model;
+                    option.textContent = model;
+                    if (model === currentModel) {
+                        option.selected = true;
+                    }
+                    modelSelect.appendChild(option);
+                });
+                
+                // Обновляем доступность backend'ов
+                const backendOptions = backendSelect.querySelectorAll('option');
+                backendOptions.forEach(option => {
+                    const backend = option.value;
+                    if (backend === 'vllm' && !models.available_backends?.vllm) {
+                        option.disabled = true;
+                        option.textContent += ' (недоступен)';
+                    }
+                    if (backend === 'transformers' && !models.available_backends?.transformers) {
+                        option.disabled = true;
+                        option.textContent += ' (недоступен)';
+                    }
+                });
+                
+                // Выбираем текущий backend
+                if (models.current_model?.backend) {
+                    backendSelect.value = models.current_model.backend;
+                }
+                
+                // Обновляем статус модели
+                const modelStatus = document.getElementById('modelStatus');
+                if (models.current_model?.status === 'loaded') {
+                    modelStatus.className = 'model-status success';
+                    modelStatus.textContent = `✅ Загружена: ${models.current_model.name} (${models.current_model.backend})`;
+                } else if (models.current_model?.status === 'error') {
+                    modelStatus.className = 'model-status error';
+                    modelStatus.textContent = `❌ Ошибка: ${models.current_model.error}`;
+                } else {
+                    modelStatus.className = 'model-status loading';
+                    modelStatus.textContent = '🔄 Загружается...';
+                }
+                
+                // Обновляем статистику
                 const statsDiv = document.getElementById('stats');
                 statsDiv.innerHTML = `
                     <div class="stat-card">
-                        <div class="stat-value">${models.current_model.name || 'N/A'}</div>
+                        <div class="stat-value">${models.current_model?.name || 'N/A'}</div>
                         <div class="stat-label">Текущая модель</div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-value">${models.current_model.device || 'N/A'}</div>
+                        <div class="stat-value">${models.current_model?.device || 'N/A'}</div>
                         <div class="stat-label">Устройство</div>
                     </div>
                     <div class="stat-card">
@@ -230,12 +403,15 @@
                         <div class="stat-label">Использование памяти</div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-value">${models.current_model.status || 'unknown'}</div>
+                        <div class="stat-value">${models.current_model?.status || 'unknown'}</div>
                         <div class="stat-label">Статус</div>
                     </div>
                 `;
             } catch (error) {
                 console.error('Ошибка загрузки статистики:', error);
+                const modelStatus = document.getElementById('modelStatus');
+                modelStatus.className = 'model-status error';
+                modelStatus.textContent = '❌ Ошибка загрузки данных о модели';
             }
         }
         
